@@ -615,10 +615,10 @@ const DealAnalyticsDashboard = () => {
         )}
       </header>
       
-      <div className="flex flex-col lg:flex-row gap-6 mb-6">
+      <div className="space-y-6 mb-6">
         {/* Summary Stats Card */}
         {summaryStats && (
-          <div className="bg-white shadow rounded-lg p-4 w-full lg:w-1/3">
+          <div className="bg-white shadow rounded-lg p-4 w-full">
             <h2 className="text-lg font-semibold mb-4 text-gray-800">Summary Statistics</h2>
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg shadow-sm">
@@ -650,7 +650,7 @@ const DealAnalyticsDashboard = () => {
         )}
         
         {/* Vertical Distribution Chart */}
-        <div className="bg-white shadow rounded-lg p-4 w-full lg:w-1/3">
+        <div className="bg-white shadow rounded-lg p-4 w-full">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold text-gray-800">Deals by Vertical</h2>
             <div className="flex space-x-2">
@@ -748,7 +748,7 @@ const DealAnalyticsDashboard = () => {
         </div>
         
         {/* Activity Distribution Chart */}
-        <div className="bg-white shadow rounded-lg p-4 w-full lg:w-1/3">
+        <div className="bg-white shadow rounded-lg p-4 w-full">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold text-gray-800">Deals by Activity</h2>
             <div className="flex space-x-2">
