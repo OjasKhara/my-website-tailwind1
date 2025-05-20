@@ -568,7 +568,7 @@ const DealAnalyticsDashboard = () => {
     <div className="min-h-screen bg-gray-50 p-4">
       <header className="bg-white shadow rounded-lg p-4 mb-6">
         <div className="flex flex-col md:flex-row md:justify-between md:items-center">
-          <h1 className="text-2xl font-bold text-gray-800 mb-4 md:mb-0">Deal Analytics Dashboard</h1>
+          <h1 className="text-2xl font-bold text-gray-800 mb-4 md:mb-0">Deal Tease Dashboard</h1>
           
           <div className="space-y-2 md:space-y-0 md:space-x-2 md:flex md:items-center">
             {/* File Upload Input */}
@@ -615,10 +615,10 @@ const DealAnalyticsDashboard = () => {
         )}
       </header>
       
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+      <div className="flex flex-col lg:flex-row gap-6 mb-6">
         {/* Summary Stats Card */}
         {summaryStats && (
-          <div className="bg-white shadow rounded-lg p-4 col-span-1">
+          <div className="bg-white shadow rounded-lg p-4 w-full lg:w-1/3">
             <h2 className="text-lg font-semibold mb-4 text-gray-800">Summary Statistics</h2>
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg shadow-sm">
@@ -650,7 +650,7 @@ const DealAnalyticsDashboard = () => {
         )}
         
         {/* Vertical Distribution Chart */}
-        <div className="bg-white shadow rounded-lg p-4 col-span-1">
+        <div className="bg-white shadow rounded-lg p-4 w-full lg:w-1/3">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold text-gray-800">Deals by Vertical</h2>
             <div className="flex space-x-2">
@@ -748,7 +748,7 @@ const DealAnalyticsDashboard = () => {
         </div>
         
         {/* Activity Distribution Chart */}
-        <div className="bg-white shadow rounded-lg p-4 col-span-1">
+        <div className="bg-white shadow rounded-lg p-4 w-full lg:w-1/3">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold text-gray-800">Deals by Activity</h2>
             <div className="flex space-x-2">
