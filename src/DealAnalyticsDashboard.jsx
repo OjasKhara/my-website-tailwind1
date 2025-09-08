@@ -10,8 +10,6 @@ const DealAnalyticsDashboard = () => {
   // State variables
   const [deals, setDeals] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [lastRefresh, setLastRefresh] = useState(null);
   const [chartViewMode, setChartViewMode] = useState({
     vertical: 'count', // 'count' or 'percentage'
     activity: 'count'  // 'count' or 'percentage'
@@ -19,22 +17,18 @@ const DealAnalyticsDashboard = () => {
   
   // Initialize state variables with safe defaults
   const [filters, setFilters] = useState({
-    revenueRange: [0, 0],
-    ebitdaRange: [2000000, 0],
+    revenueRange: [0, 220000000],
+    ebitdaRange: [0, 40000000],
     verticals: [],
     activities: [],
     regions: [],
     states: [],
-    dateRange: [
-      new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      new Date().toISOString().split('T')[0],
-    ],
-    pursuitsRange: [0, 0],
-    includeBrokers: false,
-    includeSmartshareEnabled: true,
-    includeInboundInquiryEnabled: true,
-    dealIntentStatuses: ['active'],
-    dealIntentTypes: ['sell']
+    dateRange: ['2024-01-01', '2025-12-31'],
+    pursuitsRange: [0, 150],
+    includeBrokers: true,
+    includeSmartshareEnabled: null, // null = include both, true = only enabled, false = only disabled
+    includeInboundInquiryEnabled: null, // null = include both, true = only enabled, false = only disabled
+    dealIntentStatuses: []
   });
   
   const [filterOptions, setFilterOptions] = useState({
@@ -42,166 +36,199 @@ const DealAnalyticsDashboard = () => {
     activities: [],
     regions: [],
     states: [],
-    dealIntentStatuses: [],
-    dealIntentTypes: []
+    dealIntentStatuses: []
   });
-
-  const [columns, setColumns] = useState([]);
+  
   const [selectedDeals, setSelectedDeals] = useState([]);
-  const [sortConfig, setSortConfig] = useState({ key: '', direction: 'asc' });
-  const defaultAppliedRef = useRef(false);
-  const refreshIntervalRef = useRef(null);
-
-  const fetchData = async () => {
-    const SHEET_URLS = [
-      // Direct URLs (will likely fail due to CORS)
-      'https://docs.google.com/spreadsheets/d/e/2PACX-1vTQW313wJJkfO9xzyNi41jXBmn728Cj5_3Vs2VtIvQe7vA6B1E4j0TfI99TC2FFbX4RXiGukPfkxOgJ/pub?gid=0&single=true&output=csv',
-      'https://docs.google.com/spreadsheets/d/e/2PACX-1vTQW313wJJkfO9xzyNi41jXBmn728Cj5_3Vs2VtIvQe7vA6B1E4j0TfI99TC2FFbX4RXiGukPfkxOgJ/export?format=csv&gid=0',
-      // CORS proxies as fallbacks
-      'https://api.allorigins.win/get?url=' + encodeURIComponent('https://docs.google.com/spreadsheets/d/e/2PACX-1vTQW313wJJkfO9xzyNi41jXBmn728Cj5_3Vs2VtIvQe7vA6B1E4j0TfI99TC2FFbX4RXiGukPfkxOgJ/pub?gid=0&single=true&output=csv'),
-      'https://corsproxy.io/?' + encodeURIComponent('https://docs.google.com/spreadsheets/d/e/2PACX-1vTQW313wJJkfO9xzyNi41jXBmn728Cj5_3Vs2VtIvQe7vA6B1E4j0TfI99TC2FFbX4RXiGukPfkxOgJ/pub?gid=0&single=true&output=csv'),
-      'https://cors-anywhere.herokuapp.com/https://docs.google.com/spreadsheets/d/e/2PACX-1vTQW313wJJkfO9xzyNi41jXBmn728Cj5_3Vs2VtIvQe7vA6B1E4j0TfI99TC2FFbX4RXiGukPfkxOgJ/pub?gid=0&single=true&output=csv'
-    ];
-
-    setLoading(true);
-    setError('');
-    let lastError = null;
+  const [sortConfig, setSortConfig] = useState({
+    key: 'rank',
+    direction: 'asc'
+  });
+  const [uploadedFileName, setUploadedFileName] = useState('UPLOAD FRESH DEAL TEASE REPORT.csv');
+  const [uploadError, setUploadError] = useState('');
+  const fileInputRef = useRef(null);
+  
+  // Handle file upload
+  const handleFileUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
     
-    for (let i = 0; i < SHEET_URLS.length; i++) {
-      const url = SHEET_URLS[i];
-      const isCorsProxy = url.includes('allorigins.win') || url.includes('corsproxy.io') || url.includes('cors-anywhere');
-      
-      try {
-        console.log(`Attempting to fetch from: ${isCorsProxy ? 'CORS Proxy' : 'Direct'} - ${url}`);
+    if (file.type !== 'text/csv' && !file.name.endsWith('.csv')) {
+      setUploadError('Please upload a CSV file');
+      return;
+    }
+    
+    setLoading(true);
+    setUploadError('');
+    
+    try {
+      // Read file content
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target.result;
         
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'Accept': 'text/csv,application/json,text/plain,*/*'
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        let csvText;
-        
-        if (url.includes('allorigins.win')) {
-          // allorigins.win returns JSON with contents field
-          const jsonData = await response.json();
-          csvText = jsonData.contents;
-        } else if (url.includes('corsproxy.io')) {
-          // corsproxy.io returns direct content
-          csvText = await response.text();
-        } else {
-          // Direct or cors-anywhere returns direct content
-          csvText = await response.text();
-        }
-
-        if (!csvText || csvText.trim().length === 0) {
-          throw new Error('Empty response received');
-        }
-
-        console.log(`Successfully fetched data (${csvText.length} characters)`);
-
-        // Parse the CSV
-        const result = Papa.parse(csvText, { 
-          header: true, 
-          dynamicTyping: true, 
-          skipEmptyLines: true 
+        // Parse CSV
+        const result = Papa.parse(content, {
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true
         });
         
-        if (result.errors && result.errors.length > 0) {
-          console.warn('CSV parsing warnings:', result.errors);
-        }
-
-        const dealsData = result.data || [];
-        const headers = result.meta.fields || [];
-
-        if (dealsData.length === 0) {
-          throw new Error('No data found in CSV');
-        }
-
-        const options = {
-          verticals: [...new Set(dealsData.map(d => d['Primary Supply Vertical']))].filter(Boolean),
-          activities: [...new Set(dealsData.map(d => d['Primary Supply Activity']))].filter(Boolean),
-          regions: [...new Set(dealsData.map(d => d.Region))].filter(Boolean),
-          states: [...new Set(dealsData.map(d => d['State/Province']))].filter(Boolean),
-          dealIntentStatuses: [...new Set(dealsData.map(d => d['Deal Intent Status'] || d['Deal Intent']))].filter(Boolean),
-          dealIntentTypes: [...new Set(dealsData.map(d => d['Deal Intent']))].filter(Boolean)
-        };
-
-        const maxPursuits = Math.max(...dealsData.map(d => d['Total Pursuits'] || 0));
-        const maxRevenue = Math.max(...dealsData.map(d => d.Revenue || 0));
-        const maxEbitda = Math.max(...dealsData.map(d => d.EBITDA || 0));
-
-        setDeals(dealsData);
-        setColumns(headers);
-        setFilterOptions(options);
-        setLastRefresh(new Date());
-
-        if (!defaultAppliedRef.current) {
-          setFilters(prev => ({
-            ...prev,
-            revenueRange: [0, maxRevenue],
-            ebitdaRange: [2000000, maxEbitda],
-            pursuitsRange: [0, maxPursuits]
-          }));
-          defaultAppliedRef.current = true;
-        } else {
-          setFilters(prev => ({
-            ...prev,
-            revenueRange: [prev.revenueRange[0], maxRevenue],
-            ebitdaRange: [prev.ebitdaRange[0], maxEbitda],
-            pursuitsRange: [prev.pursuitsRange[0], maxPursuits]
-          }));
-        }
-
-        if (headers.includes('EBITDA Margin')) {
-          const numeric = dealsData.some(d => !isNaN(parseFloat(d['EBITDA Margin'])));
-          if (numeric) {
-            setSortConfig({ key: 'EBITDA Margin', direction: 'desc' });
-          }
-        }
-
-        setLoading(false);
-        return; // Success! Exit the function
-
-      } catch (err) {
-        console.error(`Failed with ${isCorsProxy ? 'CORS Proxy' : 'Direct'} URL:`, err.message);
-        lastError = err;
-        
-        // If this is the last URL, we'll set the error
-        if (i === SHEET_URLS.length - 1) {
-          setError(`All fetch attempts failed. Last error: ${err.message}`);
+        if (result.errors.length > 0) {
+          setUploadError(`Error parsing CSV: ${result.errors[0].message}`);
           setLoading(false);
           return;
         }
         
-        // Otherwise, continue to next URL
-        continue;
-      }
+        // Check if required columns exist
+        const requiredColumns = [
+          'Revenue', 
+          'EBITDA', 
+          'Primary Supply Vertical', 
+          'Primary Supply Activity',
+          'Total Pursuits'
+        ];
+        
+        const missingColumns = requiredColumns.filter(col => 
+          !result.meta.fields.includes(col) && 
+          !result.meta.fields.some(field => field.toLowerCase().includes(col.toLowerCase()))
+        );
+        
+        if (missingColumns.length > 0) {
+          setUploadError(`Missing required columns: ${missingColumns.join(', ')}`);
+          setLoading(false);
+          return;
+        }
+        
+        // Calculate quality scores and assign ranks
+        const processedDeals = calculateQualityScores(result.data);
+        
+        // Extract filter options
+        const options = {
+          verticals: [...new Set(processedDeals.map(d => d["Primary Supply Vertical"]))].filter(Boolean),
+          activities: [...new Set(processedDeals.map(d => d["Primary Supply Activity"]))].filter(Boolean),
+          regions: [...new Set(processedDeals.map(d => d.Region))].filter(Boolean),
+          states: [...new Set(processedDeals.map(d => d["State/Province"]))].filter(Boolean),
+          dealIntentStatuses: [...new Set(processedDeals.map(d => d["Deal Intent"]))].filter(Boolean)
+        };
+        
+        // Get max pursuits for slider
+        const maxPursuits = Math.max(...processedDeals.map(d => d["Total Pursuits"] || 0));
+        const maxRevenue = Math.max(...processedDeals.map(d => d.Revenue || 0));
+        const maxEbitda = Math.max(...processedDeals.map(d => d.EBITDA || 0));
+        
+        // Update state
+        setDeals(processedDeals);
+        setFilterOptions(options);
+        setSelectedDeals([]);
+        
+        // Set initial ranges based on data
+        setFilters(prev => ({
+          ...prev,
+          revenueRange: [0, maxRevenue],
+          ebitdaRange: [0, maxEbitda],
+          pursuitsRange: [0, maxPursuits],
+          dealIntentStatuses: []
+        }));
+        
+        setUploadedFileName(file.name);
+        setLoading(false);
+      };
+      
+      reader.readAsText(file);
+      
+    } catch (error) {
+      console.error("Error loading file:", error);
+      setUploadError('Failed to load file: ' + error.message);
+      setLoading(false);
     }
   };
-
-  // Initial data load and setup auto-refresh
+  
+  // Load initial data
   useEffect(() => {
-    fetchData();
-    
-    // Set up auto-refresh every 2 hours (2 * 60 * 60 * 1000 ms)
-    refreshIntervalRef.current = setInterval(() => {
-      console.log('Auto-refreshing sheet data...');
-      fetchData();
-    }, 2 * 60 * 60 * 1000);
-    
-    // Cleanup interval on unmount
-    return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
+    const loadInitialData = async () => {
+      try {
+        setLoading(true);
+        const response = await window.fs.readFile('UPLOAD FRESH DEAL TEASE REPORT.csv', { encoding: 'utf8' });
+        
+        // Parse CSV
+        const result = Papa.parse(response, {
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true,
+          delimitersToGuess: [',', '\t', '|', ';']
+        });
+        
+        if (!result.data || !result.data.length) {
+          setUploadError("No data found in the CSV file.");
+          setLoading(false);
+          return;
+        }
+        
+        // Calculate quality scores and assign ranks
+        const processedDeals = calculateQualityScores(result.data);
+        
+        // Extract filter options
+        const options = {
+          verticals: [...new Set(processedDeals.map(d => d["Primary Supply Vertical"]))].filter(Boolean),
+          activities: [...new Set(processedDeals.map(d => d["Primary Supply Activity"]))].filter(Boolean),
+          regions: [...new Set(processedDeals.map(d => d.Region))].filter(Boolean),
+          states: [...new Set(processedDeals.map(d => d["State/Province"]))].filter(Boolean),
+          dealIntentStatuses: [...new Set(processedDeals.map(d => d["Deal Intent"]))].filter(Boolean)
+        };
+        
+        setDeals(processedDeals);
+        setFilterOptions(options);
+        
+        // Get max pursuits for slider
+        const maxPursuits = Math.max(...processedDeals.map(d => d["Total Pursuits"] || 0));
+        const maxRevenue = Math.max(...processedDeals.map(d => d.Revenue || 0));
+        const maxEbitda = Math.max(...processedDeals.map(d => d.EBITDA || 0));
+        
+        // Set initial ranges based on data
+        setFilters(prev => ({
+          ...prev,
+          revenueRange: [0, maxRevenue],
+          ebitdaRange: [0, maxEbitda],
+          pursuitsRange: [0, maxPursuits]
+        }));
+        
+      } catch (error) {
+        console.error("Error loading initial data:", error);
+        setUploadError("Error loading initial data. Please upload a CSV file.");
+      } finally {
+        setLoading(false);
       }
     };
+    
+    loadInitialData();
   }, []);
+  
+  // Calculate quality scores and ranks for deals
+  const calculateQualityScores = (data) => {
+    // Find maximum values for normalization
+    const maxPursuits = Math.max(...data.map(d => d["Total Pursuits"] || 0));
+    const maxRecs = Math.max(...data.map(d => d["Number of Recommendations"] || 0));
+    
+    // Calculate quality score for each deal
+    const scoredDeals = data.map(deal => {
+      const normPursuits = maxPursuits ? (deal["Total Pursuits"] || 0) / maxPursuits : 0;
+      const normRecs = maxRecs ? (deal["Number of Recommendations"] || 0) / maxRecs : 0;
+      
+      return {
+        ...deal,
+        qualityScore: (normPursuits * 0.7) + (normRecs * 0.3)
+      };
+    });
+    
+    // Sort by quality score and assign ranks
+    return scoredDeals
+      .sort((a, b) => b.qualityScore - a.qualityScore)
+      .map((deal, index) => ({
+        ...deal,
+        rank: index + 1
+      }));
+  };
   
   // Apply filters to deals
   const filteredDeals = useMemo(() => {
@@ -255,94 +282,72 @@ const DealAnalyticsDashboard = () => {
       }
       
       // Account Owner (Broker) filter
-      if (
-        filters.includeBrokers === false &&
-        deal['Account Owner'] &&
-        deal['Account Owner'].toString().toLowerCase() === 'broker'
-      ) {
+      if (filters.includeBrokers === false && 
+          (deal["Account Owner"] === "Broker")) {
         return false;
       }
-
-      // Smartshare / Inbound Inquiry filters
-      const smartshareValue = deal['SmartShare Enabled?'];
-      const inboundValue = deal['Inbound Inquiry Enabled?'];
-      const smartshareEnabled =
-        smartshareValue === 1 ||
-        smartshareValue === '1' ||
-        smartshareValue === true ||
-        (typeof smartshareValue === 'string' && smartshareValue.toUpperCase() === 'TRUE');
-      const inboundEnabled =
-        inboundValue === 1 ||
-        inboundValue === '1' ||
-        inboundValue === true ||
-        (typeof inboundValue === 'string' && inboundValue.toUpperCase() === 'TRUE');
-
-      if (filters.includeSmartshareEnabled === true && filters.includeInboundInquiryEnabled === true) {
-        if (!smartshareEnabled && !inboundEnabled) {
-          return false;
-        }
-      } else {
-        if (
-          filters.includeSmartshareEnabled !== null &&
-          smartshareEnabled !== filters.includeSmartshareEnabled
-        ) {
-          return false;
-        }
-        if (
-          filters.includeInboundInquiryEnabled !== null &&
-          inboundEnabled !== filters.includeInboundInquiryEnabled
-        ) {
-          return false;
+      
+      // Smartshare Enabled filter
+      if (filters.includeSmartshareEnabled !== null) {
+        const smartshareValue = deal["SmartShare Enabled?"];
+        
+        if (smartshareValue !== null && smartshareValue !== undefined) {
+          const isEnabled = smartshareValue === 1 || 
+                           smartshareValue === "1" || 
+                           smartshareValue === true;
+          
+          if (filters.includeSmartshareEnabled !== isEnabled) {
+            return false;
+          }
         }
       }
-
+      
+      // Inbound Inquiry Enabled filter
+      if (filters.includeInboundInquiryEnabled !== null) {
+        const inboundValue = deal["Inbound Inquiry Enabled?"];
+        
+        if (inboundValue !== null && inboundValue !== undefined) {
+          const isEnabled = inboundValue === 1 || 
+                           inboundValue === "1" || 
+                           inboundValue === true;
+          
+          if (filters.includeInboundInquiryEnabled !== isEnabled) {
+            return false;
+          }
+        }
+      }
+      
       // Deal Intent Status filter
       if (filters.dealIntentStatuses && filters.dealIntentStatuses.length > 0) {
-        const statusField = deal['Deal Intent Status'] || deal['Deal Intent'] || '';
-        if (
-          !filters.dealIntentStatuses.some(
-            (s) => statusField.toString().toLowerCase() === s.toLowerCase()
-          )
-        ) {
+        const dealIntentValue = deal["Deal Intent"];
+          
+        if (!dealIntentValue || !filters.dealIntentStatuses.includes(dealIntentValue)) {
           return false;
         }
       }
-
-      // Deal Intent Type filter
-      if (filters.dealIntentTypes && filters.dealIntentTypes.length > 0) {
-        const typeField = deal['Deal Intent'] || '';
-        if (
-          !filters.dealIntentTypes.some((t) =>
-            typeField.toString().toLowerCase().includes(t.toLowerCase())
-          )
-        ) {
-          return false;
-        }
-      }
-
+      
       // Date filter - convert string date to Date object
-      const dateStr = deal['Market Date'] || deal['Market Date (Date)'];
-      if (dateStr && filters.dateRange) {
+      if (deal["Market Date (Date)"] && filters.dateRange) {
         try {
-          const dateParts = dateStr.split('/');
+          const dateParts = deal["Market Date (Date)"].split('/');
           if (dateParts && dateParts.length === 3) {
             const dealDate = new Date(
-              parseInt(dateParts[2]),
-              parseInt(dateParts[0]) - 1,
+              parseInt(dateParts[2]), 
+              parseInt(dateParts[0]) - 1, 
               parseInt(dateParts[1])
             );
-
+            
             if (!isNaN(dealDate.getTime())) {
               const startDate = new Date(filters.dateRange[0]);
               const endDate = new Date(filters.dateRange[1]);
-
+              
               if (dealDate < startDate || dealDate > endDate) {
                 return false;
               }
             }
           }
         } catch (error) {
-          console.error('Error filtering by date:', error);
+          console.error("Error filtering by date:", error);
         }
       }
       
@@ -355,33 +360,40 @@ const DealAnalyticsDashboard = () => {
     const sorted = [...filteredDeals];
     
     sorted.sort((a, b) => {
-      const key = sortConfig.key;
-      if (!key) return 0;
-
-      const valA = a[key];
-      const valB = b[key];
-
       // Special handling for dates
-      if (key.toLowerCase().includes('date') && valA && valB) {
-        const partsA = valA.toString().split('/');
-        const partsB = valB.toString().split('/');
+      if (sortConfig.key === 'Market Date (Date)' && a[sortConfig.key] && b[sortConfig.key]) {
+        // Parse dates in MM/DD/YYYY format
+        const partsA = a[sortConfig.key].split('/');
+        const partsB = b[sortConfig.key].split('/');
+        
         if (partsA.length === 3 && partsB.length === 3) {
-          const dateA = new Date(parseInt(partsA[2]), parseInt(partsA[0]) - 1, parseInt(partsA[1]));
-          const dateB = new Date(parseInt(partsB[2]), parseInt(partsB[0]) - 1, parseInt(partsB[1]));
-          if (!isNaN(dateA) && !isNaN(dateB)) {
-            return sortConfig.direction === 'asc' ? dateA - dateB : dateB - dateA;
+          const dateA = new Date(
+            parseInt(partsA[2]), // year
+            parseInt(partsA[0]) - 1, // month (0-indexed)
+            parseInt(partsA[1]) // day
+          );
+          
+          const dateB = new Date(
+            parseInt(partsB[2]), // year
+            parseInt(partsB[0]) - 1, // month (0-indexed)
+            parseInt(partsB[1]) // day
+          );
+          
+          if (!isNaN(dateA.getTime()) && !isNaN(dateB.getTime())) {
+            return sortConfig.direction === 'asc' 
+              ? dateA - dateB 
+              : dateB - dateA;
           }
         }
       }
-
-      const numA = parseFloat(String(valA).replace(/[^0-9.-]/g, ''));
-      const numB = parseFloat(String(valB).replace(/[^0-9.-]/g, ''));
-      if (!isNaN(numA) && !isNaN(numB)) {
-        return sortConfig.direction === 'asc' ? numA - numB : numB - numA;
+      
+      // Default sorting for non-date columns
+      if (a[sortConfig.key] < b[sortConfig.key]) {
+        return sortConfig.direction === 'asc' ? -1 : 1;
       }
-
-      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+      if (a[sortConfig.key] > b[sortConfig.key]) {
+        return sortConfig.direction === 'asc' ? 1 : -1;
+      }
       return 0;
     });
     
@@ -408,38 +420,28 @@ const DealAnalyticsDashboard = () => {
   const resetFilters = () => {
     setFilters({
       revenueRange: [0, Math.max(...(deals || []).map(d => d.Revenue || 0))],
-      ebitdaRange: [2000000, Math.max(...(deals || []).map(d => d.EBITDA || 0))],
-      pursuitsRange: [0, Math.max(...(deals || []).map(d => d['Total Pursuits'] || 0))],
+      ebitdaRange: [0, Math.max(...(deals || []).map(d => d.EBITDA || 0))],
+      pursuitsRange: [0, Math.max(...(deals || []).map(d => d["Total Pursuits"] || 0))],
       verticals: [],
       activities: [],
       regions: [],
       states: [],
-      dateRange: [
-        new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        new Date().toISOString().split('T')[0],
-      ],
-      includeBrokers: false,
-      includeSmartshareEnabled: true,
-      includeInboundInquiryEnabled: true,
-      dealIntentStatuses: ['active'],
-      dealIntentTypes: ['sell']
+      dateRange: ['2024-01-01', '2025-12-31'],
+      includeBrokers: true,
+      includeSmartshareEnabled: null,
+      includeInboundInquiryEnabled: null,
+      dealIntentStatuses: []
     });
     setSelectedDeals([]);
-  };
-  
-  // Manual refresh
-  const handleManualRefresh = () => {
-    fetchData();
   };
   
   // Toggle deal selection
   const toggleDealSelection = (deal) => {
     setSelectedDeals(prev => {
-      const dealId = deal["Sellside Project: ID"] || deal["ID"] || deal["Deal ID"];
-      const isSelected = prev.some(d => (d["Sellside Project: ID"] || d["ID"] || d["Deal ID"]) === dealId);
+      const isSelected = prev.some(d => d["Sellside Project: ID"] === deal["Sellside Project: ID"]);
       
       if (isSelected) {
-        return prev.filter(d => (d["Sellside Project: ID"] || d["ID"] || d["Deal ID"]) !== dealId);
+        return prev.filter(d => d["Sellside Project: ID"] !== deal["Sellside Project: ID"]);
       } else {
         return [...prev, deal];
       }
@@ -455,14 +457,11 @@ const DealAnalyticsDashboard = () => {
     const headerRow = headers.join('\t');
     
     const rows = selectedDeals.map(deal => {
-      const dealName = deal["Sellside Project: Axial Opportunity"] || deal["Deal Name"] || deal["Opportunity"];
-      const dealId = deal["Sellside Project: ID"] || deal["ID"] || deal["Deal ID"];
-      
       return [
-        dealName,
-        deal.Revenue ? (deal.Revenue/1000000).toFixed(1) : 'N/A',
-        deal.EBITDA ? (deal.EBITDA/1000000).toFixed(1) : 'N/A',
-        dealId
+        deal["Sellside Project: Axial Opportunity"],
+        (deal.Revenue/1000000).toFixed(1),
+        (deal.EBITDA/1000000).toFixed(1),
+        deal["Sellside Project: ID"]
       ].join('\t');
     });
     
@@ -494,13 +493,10 @@ const DealAnalyticsDashboard = () => {
     return {
       totalDeals: filteredDeals.length,
       totalRevenue: filteredDeals.reduce((sum, deal) => sum + (deal.Revenue || 0), 0),
-      avgRevenue:
-        filteredDeals.reduce((sum, deal) => sum + (deal.Revenue || 0), 0) /
-        filteredDeals.length,
+      avgRevenue: filteredDeals.reduce((sum, deal) => sum + (deal.Revenue || 0), 0) / filteredDeals.length,
       totalEBITDA: filteredDeals.reduce((sum, deal) => sum + (deal.EBITDA || 0), 0),
-      avgEBITDA:
-        filteredDeals.reduce((sum, deal) => sum + (deal.EBITDA || 0), 0) /
-        filteredDeals.length,
+      avgEBITDA: filteredDeals.reduce((sum, deal) => sum + (deal.EBITDA || 0), 0) / filteredDeals.length,
+      avgQualityScore: filteredDeals.reduce((sum, deal) => sum + deal.qualityScore, 0) / filteredDeals.length
     };
   }, [filteredDeals]);
   
@@ -563,7 +559,6 @@ const DealAnalyticsDashboard = () => {
         <div className="text-center">
           <h2 className="text-2xl font-bold mb-4">Loading Deal Analytics Dashboard...</h2>
           <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="mt-4 text-gray-600">Trying multiple data sources...</p>
         </div>
       </div>
     );
@@ -576,13 +571,28 @@ const DealAnalyticsDashboard = () => {
           <h1 className="text-2xl font-bold text-gray-800 mb-4 md:mb-0">Deal Tease Dashboard</h1>
           
           <div className="space-y-2 md:space-y-0 md:space-x-2 md:flex md:items-center">
-            <button
-              onClick={handleManualRefresh}
-              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-            >
-              Refresh Data
-            </button>
-            <button
+            {/* File Upload Input */}
+            <div className="flex items-center">
+              <input
+                type="file"
+                accept=".csv"
+                onChange={handleFileUpload}
+                ref={fileInputRef}
+                className="hidden"
+                id="csv-upload"
+              />
+              <label 
+                htmlFor="csv-upload"
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 cursor-pointer"
+              >
+                Upload CSV
+              </label>
+              <span className="ml-2 text-sm text-gray-600 truncate max-w-xs">
+                {uploadedFileName}
+              </span>
+            </div>
+            
+            <button 
               onClick={resetFilters}
               className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
             >
@@ -590,29 +600,17 @@ const DealAnalyticsDashboard = () => {
             </button>
           </div>
         </div>
-
+        
         <div className="mt-2 flex justify-between items-center">
           <div className="text-gray-600">
             {filteredDeals.length} deals displayed out of {deals.length} total
-            {lastRefresh && (
-              <span className="ml-4 text-sm text-gray-500">
-                Last updated: {lastRefresh.toLocaleTimeString()}
-              </span>
-            )}
           </div>
         </div>
-
-        {/* Display error if any */}
-        {error && (
-          <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded">
-            <div className="text-red-800 font-medium">Error loading data:</div>
-            <div className="text-red-600 text-sm mt-1">{error}</div>
-            <button 
-              onClick={handleManualRefresh}
-              className="mt-2 px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700"
-            >
-              Try Again
-            </button>
+        
+        {/* Display upload error if any */}
+        {uploadError && (
+          <div className="mt-2 text-red-500 text-sm">
+            {uploadError}
           </div>
         )}
       </header>
@@ -622,7 +620,7 @@ const DealAnalyticsDashboard = () => {
         {summaryStats && (
           <div className="bg-white shadow rounded-lg p-4 w-full">
             <h2 className="text-lg font-semibold mb-4 text-gray-800">Summary Statistics</h2>
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 gap-4">
               <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg shadow-sm">
                 <div className="text-sm text-indigo-500 font-semibold">Total Deals</div>
                 <div className="text-2xl font-bold text-gray-800">{summaryStats.totalDeals}</div>
@@ -642,6 +640,10 @@ const DealAnalyticsDashboard = () => {
               <div className="bg-gradient-to-br from-pink-50 to-rose-50 p-4 rounded-lg shadow-sm">
                 <div className="text-sm text-pink-500 font-semibold">Avg. EBITDA</div>
                 <div className="text-2xl font-bold text-gray-800">${(summaryStats.avgEBITDA / 1000000).toFixed(1)}M</div>
+              </div>
+              <div className="bg-gradient-to-br from-indigo-50 to-violet-50 p-4 rounded-lg shadow-sm">
+                <div className="text-sm text-indigo-500 font-semibold">Avg. Quality Score</div>
+                <div className="text-2xl font-bold text-gray-800">{summaryStats.avgQualityScore.toFixed(2)}</div>
               </div>
             </div>
           </div>
@@ -669,11 +671,13 @@ const DealAnalyticsDashboard = () => {
                   <XAxis 
                     type="number" 
                     domain={[0, chartViewMode.vertical === 'count' ? 'dataMax' : (
+                      // Find the max percentage and add 10% padding, or use 100 if close to it
                       Math.max(...verticalChartData.map(item => item.percentage)) > 90 ? 100 : 
                       Math.min(100, Math.ceil(Math.max(...verticalChartData.map(item => item.percentage)) * 1.1))
                     )]} 
                     tickCount={5}
                     tickFormatter={value => chartViewMode.vertical === 'percentage' ? `${value}%` : value}
+                    // Add padding to accommodate external labels for small values
                     padding={{ right: 30 }}
                   />
                   <YAxis 
@@ -710,7 +714,8 @@ const DealAnalyticsDashboard = () => {
                         ? value 
                         : `${value.toFixed(1)}%`;
                       
-                      const threshold = chartViewMode.vertical === 'count' ? 15 : 5;
+                      // Dynamic label positioning - outside for small values, inside for larger values
+                      const threshold = chartViewMode.vertical === 'count' ? 15 : 5; // Adjust threshold as needed
                       const isSmallValue = value < threshold;
                       
                       return (
@@ -765,11 +770,13 @@ const DealAnalyticsDashboard = () => {
                   <XAxis 
                     type="number" 
                     domain={[0, chartViewMode.activity === 'count' ? 'dataMax' : (
+                      // Find the max percentage and add 10% padding, or use 100 if close to it
                       Math.max(...activityChartData.map(item => item.percentage)) > 90 ? 100 : 
                       Math.min(100, Math.ceil(Math.max(...activityChartData.map(item => item.percentage)) * 1.1))
                     )]} 
                     tickCount={5}
                     tickFormatter={value => chartViewMode.activity === 'percentage' ? `${value}%` : value}
+                    // Add padding to accommodate external labels for small values
                     padding={{ right: 30 }}
                   />
                   <YAxis 
@@ -806,7 +813,8 @@ const DealAnalyticsDashboard = () => {
                         ? value 
                         : `${value.toFixed(1)}%`;
                       
-                      const threshold = chartViewMode.activity === 'count' ? 15 : 5;
+                      // Dynamic label positioning - outside for small values, inside for larger values
+                      const threshold = chartViewMode.activity === 'count' ? 15 : 5; // Adjust threshold as needed
                       const isSmallValue = value < threshold;
                       
                       return (
@@ -845,82 +853,78 @@ const DealAnalyticsDashboard = () => {
           <h2 className="text-lg font-semibold mb-4">Filters</h2>
           
           {/* Revenue Range Filter */}
-          {deals.length > 0 && (
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Revenue Range: ${(filters?.revenueRange?.[0] / 1000000 || 0).toFixed(1)}M - ${(filters?.revenueRange?.[1] / 1000000 || 0).toFixed(1)}M
-              </label>
-              <div className="px-2">
-                <input
-                  type="range"
-                  min="0"
-                  max={Math.max(...deals.map(d => d.Revenue || 0)) / 1000000}
-                  step="0.1"
-                  value={(filters?.revenueRange?.[0] / 1000000 || 0).toFixed(1)}
-                  onChange={(e) => handleFilterChange('revenueRange', [
-                    parseFloat(e.target.value) * 1000000, 
-                    filters.revenueRange[1]
-                  ])}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                />
-                <input
-                  type="range"
-                  min="0"
-                  max={Math.max(...deals.map(d => d.Revenue || 0)) / 1000000}
-                  step="0.1"
-                  value={(filters?.revenueRange?.[1] / 1000000 || 0).toFixed(1)}
-                  onChange={(e) => handleFilterChange('revenueRange', [
-                    filters.revenueRange[0],
-                    parseFloat(e.target.value) * 1000000
-                  ])}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer mt-2"
-                />
-              </div>
-              <div className="flex justify-between text-xs text-gray-500 px-2">
-                <span>$0M</span>
-                <span>${(Math.max(...deals.map(d => d.Revenue || 0)) / 1000000).toFixed(1)}M</span>
-              </div>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Revenue Range: ${(filters?.revenueRange?.[0] / 1000000 || 0).toFixed(1)}M - ${(filters?.revenueRange?.[1] / 1000000 || 0).toFixed(1)}M
+            </label>
+            <div className="px-2">
+              <input
+                type="range"
+                min="0"
+                max={Math.max(...(deals || []).map(d => d.Revenue || 0)) / 1000000}
+                step="0.1"
+                value={(filters?.revenueRange?.[0] / 1000000 || 0).toFixed(1)}
+                onChange={(e) => handleFilterChange('revenueRange', [
+                  parseFloat(e.target.value) * 1000000, 
+                  filters.revenueRange[1]
+                ])}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+              <input
+                type="range"
+                min="0"
+                max={Math.max(...(deals || []).map(d => d.Revenue || 0)) / 1000000}
+                step="0.1"
+                value={(filters?.revenueRange?.[1] / 1000000 || 0).toFixed(1)}
+                onChange={(e) => handleFilterChange('revenueRange', [
+                  filters.revenueRange[0],
+                  parseFloat(e.target.value) * 1000000
+                ])}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer mt-2"
+              />
             </div>
-          )}
+            <div className="flex justify-between text-xs text-gray-500 px-2">
+              <span>$0M</span>
+              <span>${(Math.max(...(deals || []).map(d => d.Revenue || 0)) / 1000000).toFixed(1)}M</span>
+            </div>
+          </div>
           
           {/* EBITDA Range Filter */}
-          {deals.length > 0 && (
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                EBITDA Range: ${(filters?.ebitdaRange?.[0] / 1000000 || 0).toFixed(1)}M - ${(filters?.ebitdaRange?.[1] / 1000000 || 0).toFixed(1)}M
-              </label>
-              <div className="px-2">
-                <input
-                  type="range"
-                  min="0"
-                  max={Math.max(...deals.map(d => d.EBITDA || 0)) / 1000000}
-                  step="0.1"
-                  value={(filters?.ebitdaRange?.[0] / 1000000 || 0).toFixed(1)}
-                  onChange={(e) => handleFilterChange('ebitdaRange', [
-                    parseFloat(e.target.value) * 1000000, 
-                    filters.ebitdaRange[1]
-                  ])}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                />
-                <input
-                  type="range"
-                  min="0"
-                  max={Math.max(...deals.map(d => d.EBITDA || 0)) / 1000000}
-                  step="0.1"
-                  value={(filters?.ebitdaRange?.[1] / 1000000 || 0).toFixed(1)}
-                  onChange={(e) => handleFilterChange('ebitdaRange', [
-                    filters.ebitdaRange[0],
-                    parseFloat(e.target.value) * 1000000
-                  ])}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer mt-2"
-                />
-              </div>
-              <div className="flex justify-between text-xs text-gray-500 px-2">
-                <span>$0M</span>
-                <span>${(Math.max(...deals.map(d => d.EBITDA || 0)) / 1000000).toFixed(1)}M</span>
-              </div>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              EBITDA Range: ${(filters?.ebitdaRange?.[0] / 1000000 || 0).toFixed(1)}M - ${(filters?.ebitdaRange?.[1] / 1000000 || 0).toFixed(1)}M
+            </label>
+            <div className="px-2">
+              <input
+                type="range"
+                min="0"
+                max={Math.max(...(deals || []).map(d => d.EBITDA || 0)) / 1000000}
+                step="0.1"
+                value={(filters?.ebitdaRange?.[0] / 1000000 || 0).toFixed(1)}
+                onChange={(e) => handleFilterChange('ebitdaRange', [
+                  parseFloat(e.target.value) * 1000000, 
+                  filters.ebitdaRange[1]
+                ])}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+              />
+              <input
+                type="range"
+                min="0"
+                max={Math.max(...(deals || []).map(d => d.EBITDA || 0)) / 1000000}
+                step="0.1"
+                value={(filters?.ebitdaRange?.[1] / 1000000 || 0).toFixed(1)}
+                onChange={(e) => handleFilterChange('ebitdaRange', [
+                  filters.ebitdaRange[0],
+                  parseFloat(e.target.value) * 1000000
+                ])}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer mt-2"
+              />
             </div>
-          )}
+            <div className="flex justify-between text-xs text-gray-500 px-2">
+              <span>$0M</span>
+              <span>${(Math.max(...(deals || []).map(d => d.EBITDA || 0)) / 1000000).toFixed(1)}M</span>
+            </div>
+          </div>
           
           {/* Vertical Filter */}
           <div className="mb-4">
@@ -981,13 +985,13 @@ const DealAnalyticsDashboard = () => {
           {/* Pursuits Range Filter */}
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Total Pursuits: {filters?.pursuitsRange?.[0] || 0} - {filters?.pursuitsRange?.[1] || 150}
+              Total Pursuits: {filters?.pursuitsRange?.[0] || 0} - {filters?.pursuitsRange?.[1] || 0}
             </label>
             <div className="px-2">
               <input
                 type="range"
                 min="0"
-                max={deals.length > 0 ? Math.max(...deals.map(d => d["Total Pursuits"] || 0)) : 150}
+                max={Math.max(...(deals || []).map(d => d["Total Pursuits"] || 0))}
                 step="1"
                 value={filters?.pursuitsRange?.[0] || 0}
                 onChange={(e) => handleFilterChange('pursuitsRange', [
@@ -999,9 +1003,9 @@ const DealAnalyticsDashboard = () => {
               <input
                 type="range"
                 min="0"
-                max={deals.length > 0 ? Math.max(...deals.map(d => d["Total Pursuits"] || 0)) : 150}
+                max={Math.max(...(deals || []).map(d => d["Total Pursuits"] || 0))}
                 step="1"
-                value={filters?.pursuitsRange?.[1] || 150}
+                value={filters?.pursuitsRange?.[1] || 0}
                 onChange={(e) => handleFilterChange('pursuitsRange', [
                   filters.pursuitsRange[0],
                   parseInt(e.target.value)
@@ -1011,7 +1015,7 @@ const DealAnalyticsDashboard = () => {
             </div>
             <div className="flex justify-between text-xs text-gray-500 px-2">
               <span>0</span>
-              <span>{deals.length > 0 ? Math.max(...deals.map(d => d["Total Pursuits"] || 0)) : 150}</span>
+              <span>{Math.max(...(deals || []).map(d => d["Total Pursuits"] || 0))}</span>
             </div>
           </div>
           
@@ -1231,39 +1235,11 @@ const DealAnalyticsDashboard = () => {
               ))}
             </div>
           </div>
-
-          {/* Deal Intent Filter */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Deal Intent
-            </label>
-            <div className="max-h-48 overflow-y-auto border rounded p-2">
-              {filterOptions.dealIntentTypes.map(intent => (
-                <div key={intent} className="flex items-center mb-1">
-                  <input
-                    type="checkbox"
-                    id={`intent-${intent}`}
-                    checked={filters?.dealIntentTypes?.includes(intent)}
-                    onChange={(e) => {
-                      const newTypes = e.target.checked
-                        ? [...(filters?.dealIntentTypes || []), intent]
-                        : (filters?.dealIntentTypes || []).filter(i => i !== intent);
-                      handleFilterChange('dealIntentTypes', newTypes);
-                    }}
-                    className="h-4 w-4 mr-2"
-                  />
-                  <label htmlFor={`intent-${intent}`} className="text-sm">
-                    {intent}
-                  </label>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
         
         {/* Main Content Area */}
         <div className="lg:col-span-3 space-y-6">
-          {/* Deals Table */}
+          {/* All Deals Table */}
           <div className="bg-white shadow rounded-lg p-4">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-semibold">Deals Table</h2>
@@ -1286,62 +1262,144 @@ const DealAnalyticsDashboard = () => {
                     <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Select
                     </th>
-                    {columns.map((col) => (
-                      <th
-                        key={col}
-                        className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                        onClick={() => handleSort(col)}
-                      >
-                        {col} {sortConfig.key === col && (sortConfig.direction === 'asc' ? '↑' : '↓')}
-                      </th>
-                    ))}
+                    <th 
+                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                      onClick={() => handleSort('rank')}
+                    >
+                      Rank {sortConfig.key === 'rank' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('Sellside Project: ID')}
+                    >
+                      ID {sortConfig.key === 'Sellside Project: ID' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('Sellside Project: Axial Opportunity')}
+                    >
+                      Deal {sortConfig.key === 'Sellside Project: Axial Opportunity' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('Revenue')}
+                    >
+                      Revenue ($M) {sortConfig.key === 'Revenue' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('EBITDA')}
+                    >
+                      EBITDA ($M) {sortConfig.key === 'EBITDA' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('Primary Supply Vertical')}
+                    >
+                      Vertical {sortConfig.key === 'Primary Supply Vertical' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('Primary Supply Activity')}
+                    >
+                      Activity {sortConfig.key === 'Primary Supply Activity' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('Market Date (Date)')}
+                    >
+                      Market Date {sortConfig.key === 'Market Date (Date)' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('State/Province')}
+                    >
+                      State/Province {sortConfig.key === 'State/Province' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('Total Pursuits')}
+                    >
+                      Pursuits {sortConfig.key === 'Total Pursuits' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('Total Recipients')}
+                    >
+                      Recipients {sortConfig.key === 'Total Recipients' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('Number of Recommendations')}
+                    >
+                      Recommendations {sortConfig.key === 'Number of Recommendations' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('Pursuit Rate')}
+                    >
+                      Pursuit % {sortConfig.key === 'Pursuit Rate' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                       onClick={() => handleSort('qualityScore')}
+                    >
+                      Quality Score {sortConfig.key === 'qualityScore' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {sortedDeals.map((deal, index) => {
-                    const dealId = deal["Sellside Project: ID"] || deal["ID"] || deal["Deal ID"] || index;
-                    const isSelected = selectedDeals.some(d => (d["Sellside Project: ID"] || d["ID"] || d["Deal ID"]) === dealId);
+                  {sortedDeals.map((deal) => {
+                    const isSelected = selectedDeals.some(d => d["Sellside Project: ID"] === deal["Sellside Project: ID"]);
                     
                     return (
-                      <tr
-                        key={dealId}
+                      <tr 
+                        key={deal["Sellside Project: ID"]} 
                         className={`hover:bg-gray-50 ${isSelected ? 'bg-green-50' : ''}`}
                       >
                         <td className="px-2 py-2 whitespace-nowrap">
-                          <input
-                            type="checkbox"
+                          <input 
+                            type="checkbox" 
                             checked={isSelected}
                             onChange={() => toggleDealSelection(deal)}
                             className="h-4 w-4"
                           />
                         </td>
-                        {columns.map((col) => (
-                          <td
-                            key={col}
-                            className="px-3 py-2 whitespace-nowrap text-sm text-gray-500 max-w-xs truncate"
-                          >
-                            {col === 'Sellside Project: ID' && deal[col] ? (
-                              <a
-                                href={`https://axialinc.lightning.force.com/lightning/r/Sellside_Project__c/${deal[col]}/view`}
-                                className="text-blue-600 hover:underline"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                {deal[col]}
-                              </a>
-                            ) : col === "Revenue" && deal[col] ? (
-                              `$${(deal[col] / 1000000).toFixed(1)}M`
-                            ) : col === "EBITDA" && deal[col] ? (
-                              `$${(deal[col] / 1000000).toFixed(1)}M`
-                            ) : col === "EBITDA Margin" && deal[col] ? (
-                              `${(deal[col] * 100).toFixed(1)}%`
-                            ) : (
-                              <span className={deal[col] ? "" : "text-gray-400"}>
-                                {deal[col] !== undefined ? deal[col].toString() : '-'}
-                              </span>
-                            )}
-                          </td>
-                        ))}
+                        <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{deal.rank}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {deal["Sellside Project: ID"]}
+                        </td>
+                        <td className="px-3 py-2 text-sm text-gray-500 max-w-xs truncate">
+                          {deal["Sellside Project: Axial Opportunity"]}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          ${(deal.Revenue/1000000).toFixed(1)}M
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          ${(deal.EBITDA/1000000).toFixed(1)}M
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {deal["Primary Supply Vertical"]}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {deal["Primary Supply Activity"]}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {deal["Market Date (Date)"]}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {deal["State/Province"] || "-"}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {deal["Total Pursuits"]}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {deal["Total Recipients"]}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {deal["Number of Recommendations"]}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {deal["Pursuit Rate"] && deal["Pursuit Rate"].toFixed(1)}%
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          <div className="flex items-center">
+                            <span className="mr-2">{deal.qualityScore.toFixed(2)}</span>
+                            <div className="w-16 bg-gray-200 rounded-full h-2">
+                              <div 
+                                className="bg-blue-600 h-2 rounded-full" 
+                                style={{ width: `${deal.qualityScore * 100}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1372,23 +1430,14 @@ const DealAnalyticsDashboard = () => {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {selectedDeals.map((deal, index) => {
-                      const dealName = deal["Sellside Project: Axial Opportunity"] || deal["Deal Name"] || deal["Opportunity"];
-                      const dealId = deal["Sellside Project: ID"] || deal["ID"] || deal["Deal ID"];
-                      
-                      return (
-                        <tr key={index} className="hover:bg-gray-50">
-                          <td className="px-6 py-2 text-sm text-gray-500">{dealName}</td>
-                          <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500">
-                            {deal.Revenue ? `$${(deal.Revenue/1000000).toFixed(1)}M` : 'N/A'}
-                          </td>
-                          <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500">
-                            {deal.EBITDA ? `$${(deal.EBITDA/1000000).toFixed(1)}M` : 'N/A'}
-                          </td>
-                          <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500">{dealId}</td>
-                        </tr>
-                      );
-                    })}
+                    {selectedDeals.map((deal, index) => (
+                      <tr key={index} className="hover:bg-gray-50">
+                        <td className="px-6 py-2 text-sm text-gray-500">{deal["Sellside Project: Axial Opportunity"]}</td>
+                        <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500">${(deal.Revenue/1000000).toFixed(1)}M</td>
+                        <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500">${(deal.EBITDA/1000000).toFixed(1)}M</td>
+                        <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500">{deal["Sellside Project: ID"]}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
